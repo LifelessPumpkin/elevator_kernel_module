@@ -6,7 +6,3 @@
 *.mod*
 *.exe
 *.out
-
-cat /proc/timer
-sleep 1
-cat /proc/timer
