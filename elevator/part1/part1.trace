@@ -1,0 +1,34 @@
+execve("./part1", ["./part1"], 0xffffcd98b5e0 /* 64 vars */) = 0
+brk(NULL)                               = 0xbafc51139000
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xeb487bae0000
+faccessat(AT_FDCWD, "/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=59963, ...}) = 0
+mmap(NULL, 59963, PROT_READ, MAP_PRIVATE, 3, 0) = 0xeb487bad1000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0(%\2\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0755, st_size=1788680, ...}) = 0
+mmap(NULL, 1957936, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xeb487b8c9000
+mmap(0xeb487b8d0000, 1892400, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xeb487b8d0000
+munmap(0xeb487b8c9000, 28672)           = 0
+munmap(0xeb487ba9f000, 32816)           = 0
+mprotect(0xeb487ba7a000, 77824, PROT_NONE) = 0
+mmap(0xeb487ba8d000, 20480, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1ad000) = 0xeb487ba8d000
+mmap(0xeb487ba92000, 49200, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xeb487ba92000
+close(3)                                = 0
+set_tid_address(0xeb487bae0ff0)         = 6645
+set_robust_list(0xeb487bae1000, 24)     = 0
+rseq(0xeb487bae16e0, 0x20, 0, 0xd428bc00) = 0
+mprotect(0xeb487ba8d000, 12288, PROT_READ) = 0
+mprotect(0xbafc4137f000, 4096, PROT_READ) = 0
+mprotect(0xeb487bae6000, 8192, PROT_READ) = 0
+prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+munmap(0xeb487bad1000, 59963)           = 0
+write(1, "Hello\n", 6)                  = 6
+write(1, "Hello\n", 6)                  = 6
+write(1, "Hello\n", 6)                  = 6
+write(1, "Hello\n", 6)                  = 6
+write(1, "Hello\n", 6)                  = 6
+exit_group(0)                           = ?
++++ exited with 0 +++
