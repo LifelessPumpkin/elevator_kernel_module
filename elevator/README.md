@@ -1,41 +1,33 @@
 # Elevator
 
-[Description]
+A simple elevator kernel module that accepts requests from pets.
 
 ## Group Members
 - **Logan Harmon**: lmh22c@fsu.edu
 ## Division of Labor
 
 ### Part 1: System Call Tracing
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 2: Timer Kernel Module
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3a: Adding System Calls
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3b: Kernel Compilation
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3c: Threads
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3d: Linked List
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3e: Mutexes
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ### Part 3f: Scheduling Algorithm
-- **Responsibilities**: [Description]
 - **Assigned to**: Logan Harmon
 
 ## File Listing
@@ -49,13 +41,12 @@ elevator/
 │   ├── part1.trace
 │   └── Makefile
 ├── part2/
-│   ├── src/
+│   ├── my_timer.c
 │   └── Makefile
 ├── part3/
 │   ├── src/
-│   ├── tests/
 │   ├── Makefile
-│   └── sys_call.c
+│   └── syscalls.c
 ├── Makefile
 └── README.md
 
@@ -63,36 +54,32 @@ elevator/
 # How to Compile & Execute
 
 ### Requirements
-- **Compiler**: e.g., `gcc` for C/C++, `rustc` for Rust.
-- **Dependencies**: List any libraries or frameworks necessary (rust only).
+- **Compiler**: gcc
 
 ## Part 1
 
 ### Compilation
-For a C/C++ example:
 ```bash
 make
 ```
-This will build the executable in ...
 ### Execution
 ```bash
-make run
+./empty
+./part1
 ```
-This will run the program ...
 
 ## Part 2
 
 ### Compilation
-For a C/C++ example:
 ```bash
 make
 ```
-This will build the executable in ...
 ### Execution
 ```bash
-make run
+sudo insmod my_timer.ko
+cat /proc/timer
+sudo rmmod my_timer.ko
 ```
-This will run the program ...
 
 
 ## Part 3
@@ -110,44 +97,20 @@ make run
 This will run the program ...
 
 ## Development Log
-Each member records their contributions here.
 
-### [Member 1]
-
-| Date       | Work Completed / Notes |
-|------------|------------------------|
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
-
-### [Member 2]
+### [Logan Harmon]
 
 | Date       | Work Completed / Notes |
 |------------|------------------------|
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
+| 2025-10-12 | Finished part1  |
+| 2025-10-13 | Finished part 2  |
+| 2025-10-24 | Compiled and installed kernel  |
 
-
-### [Member 3]
-
-| Date       | Work Completed / Notes |
-|------------|------------------------|
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
-| YYYY-MM-DD | [Description of task]  |
 
 
 ## Meetings
-Document in-person meetings, their purpose, and what was discussed.
 
-| Date       | Attendees            | Topics Discussed | Outcomes / Decisions |
-|------------|----------------------|------------------|-----------------------|
-| YYYY-MM-DD | [Names]              | [Agenda items]   | [Actions/Next steps]  |
-| YYYY-MM-DD | [Names]              | [Agenda items]   | [Actions/Next steps]  |
-| YYYY-MM-DD | [Names]              | [Agenda items]   | [Actions/Next steps]  |
-
-
+None, it was just me.
 
 ## Bugs
 - **Bug 1**: This is bug 1.

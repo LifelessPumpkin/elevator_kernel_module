@@ -34,9 +34,6 @@ static ssize_t procfile_read(struct file* file, char* ubuf, size_t count, loff_t
     // Get current time and set prev_time_called
     ktime_get_ts64(&new_timespec);
 
-    // Format the timestamp into a string
-    
-
     // If it's not equal to null, then perorm the subtraction and update len
     if (prev_set) {
         long long int seconds = new_timespec.tv_sec - prev_timespec.tv_sec;
@@ -71,23 +68,8 @@ static ssize_t procfile_read(struct file* file, char* ubuf, size_t count, loff_t
     return len + 1;
 }
 
-// static ssize_t procfile_write(struct file* file, const char* ubuf, size_t count, loff_t* ppos) {
-//     printk(KERN_INFO "proc_write\n");
-//     if (count > BUF_LEN)
-//         procfs_buf_len = BUF_LEN;
-//     else
-//         procfs_buf_len = count;
-//     if (copy_from_user(msg, ubuf, procfs_buf_len)) {
-//         printk(KERN_WARNING "Failed to copy data from user space\n");
-//         return -EFAULT;
-//     }
-//     printk(KERN_INFO "got from user: %s\n", msg);
-//     return procfs_buf_len;
-// }
-
 static const struct proc_ops procfile_fops = {
     .proc_read = procfile_read,
-    // .proc_write = procfile_write,
 };
 
 static int __init init_timer(void) {
