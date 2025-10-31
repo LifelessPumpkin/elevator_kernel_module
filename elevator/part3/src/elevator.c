@@ -9,6 +9,7 @@
 #include <linux/kthread.h>
 #include <linux/mutex.h>
 #include <linux/delay.h>
+#include <linux/limits.h>
 
 #define ENTRY_NAME "elevator"
 #define PERMS 0666
@@ -32,15 +33,13 @@ static struct pet
     int weight; // 3, 14, 10, 16
     int starting_floor;
     int destination_floor;
-}pet;
-
+};
 static struct floor 
 {
     struct list_head pets_waiting;
     struct mutex lock;
     bool elevator_at_floor;
-}floor;
-
+};
 static struct elevator 
 {
     int current_floor;
@@ -50,7 +49,7 @@ static struct elevator
     struct task_struct* thread;    
     struct list_head pet_list;
 
-}elevator;
+};
 
 static int start_elevator(void);                                                    
 static int issue_request(int start_floor, int destination_floor, int type);
@@ -62,20 +61,15 @@ static void add_pet_to_floor(int type, int start_floor, int dest_floor);
 static void add_pet_to_elevator(struct elevator* pet_elevator, struct floor* flo);
 static bool look_for_request(void);
 static int get_closest_request(void);
-static void remove_first_pet_from_floor(struct floor* flo);
+static bool dispense_pets_from_elevator(struct elevator* ele);
 
 
-// Global instance of elevator so it persists across syscalls
 static struct elevator* pet_elevator = NULL;
-// Global instance of the floors so the pets can line up 
 static struct floor* floor1 = NULL;
 static struct floor* floor2 = NULL;
 static struct floor* floor3 = NULL;
 static struct floor* floor4 = NULL;
 static struct floor* floor5 = NULL;
-static struct floor* floor6 = NULL;
-// I should make them into a list but for now this is fine
-
 
 static int start_elevator(void) {
 
@@ -94,11 +88,10 @@ static int start_elevator(void) {
     floor3 = kmalloc(sizeof(*floor3), GFP_KERNEL);
     floor4 = kmalloc(sizeof(*floor4), GFP_KERNEL);
     floor5 = kmalloc(sizeof(*floor5), GFP_KERNEL);
-    floor6 = kmalloc(sizeof(*floor5), GFP_KERNEL);
 
     
     // If it can't allocate memory return -ENOMEM
-    if (!pet_elevator || !floor1 || !floor2 || !floor3 || !floor4 || !floor5 || !floor6) {
+    if (!pet_elevator || !floor1 || !floor2 || !floor3 || !floor4 || !floor5) {
         printk(KERN_INFO "Couldn't allocate memory to run the elevator\n");
         return -ENOMEM;
     }
@@ -111,7 +104,6 @@ static int start_elevator(void) {
     mutex_init(&floor3->lock);
     mutex_init(&floor4->lock);
     mutex_init(&floor5->lock);
-    mutex_init(&floor6->lock);
 
     INIT_LIST_HEAD(&pet_elevator->pet_list);
     INIT_LIST_HEAD(&floor1->pets_waiting);
@@ -119,7 +111,6 @@ static int start_elevator(void) {
     INIT_LIST_HEAD(&floor3->pets_waiting);
     INIT_LIST_HEAD(&floor4->pets_waiting);
     INIT_LIST_HEAD(&floor5->pets_waiting);
-    INIT_LIST_HEAD(&floor6->pets_waiting);
 
     pet_elevator->thread = kthread_run(move_elevator_thread,pet_elevator,"elevator_thread");
     if (IS_ERR(pet_elevator->thread)) {
@@ -150,7 +141,6 @@ static int stop_elevator(void) {
     cleanup_floor_list(floor3);
     cleanup_floor_list(floor4);
     cleanup_floor_list(floor5);
-    cleanup_floor_list(floor6);
 
     kfree(pet_elevator);
     kfree(floor1);
@@ -158,7 +148,6 @@ static int stop_elevator(void) {
     kfree(floor3);
     kfree(floor4);
     kfree(floor5);
-    kfree(floor6);
 
     pet_elevator = NULL;
     floor1 = NULL;
@@ -166,13 +155,12 @@ static int stop_elevator(void) {
     floor3 = NULL;
     floor4 = NULL;
     floor5 = NULL;
-    floor6 = NULL;
     return 0;
 }
 
 static int issue_request(int start_floor, int dest_floor, int type) {
-    if (start_floor < 1 || start_floor > 6) return 1;
-    if (dest_floor < 1 || dest_floor > 6) return 1;
+    if (start_floor < 1 || start_floor > 5) return 1;
+    if (dest_floor < 1 || dest_floor > 5) return 1;
     if (type < 0 || type > 3) return 1;
 
     add_pet_to_floor(type,start_floor,dest_floor);
@@ -186,15 +174,47 @@ static int move_elevator_thread(void *data) {
     while (!kthread_should_stop()) {
         mutex_lock(&pet_ele->lock);
 
-        if (!list_empty(&pet_elevator->pet_list)) {
+        if (!list_empty(&pet_ele->pet_list)) {
+            // Dispense all pets that want to leave on this floor
+            // Sleep for a second if there is any pets to dispense
+            if (dispense_pets_from_elevator(pet_ele) == true) ssleep(1);
+            if (list_empty(&pet_ele->pet_list)) continue;
+            // Begin to move towards the first entry's destination
+            // Along the way, if its not full then pick up more pets
+            // If all pets have been dispensed, then continue and wait
             struct pet* next_pet = list_first_entry(&pet_ele->pet_list,struct pet,list);
-            printk(KERN_INFO "Moving a floor!\n");
-            msleep(500);
+            int destination = next_pet->destination_floor;
+            // Look for pets on current floor, if none then keep moving
+            // else if elevator is not full, then add the pet to the elevator
+            
+            if (pet_ele->current_floor == destination) {
+                
+                struct floor* current_floor = NULL;
+                if (pet_elevator->current_floor == 1) current_floor = floor1;
+                if (pet_elevator->current_floor == 2) current_floor = floor2;
+                if (pet_elevator->current_floor == 3) current_floor = floor3;
+                if (pet_elevator->current_floor == 4) current_floor = floor4;
+                if (pet_elevator->current_floor == 5) current_floor = floor5;
 
-            // more logic here
-
-            list_del(&next_pet->list);
-            kfree(next_pet);
+                if (current_floor) {
+                    mutex_lock(&current_floor->lock);
+                    if (!list_empty(&current_floor->pets_waiting)) {
+                        add_pet_to_elevator(pet_elevator, current_floor);
+                    }
+                    mutex_unlock(&current_floor->lock);
+                }
+            }
+            else if (pet_ele->current_floor < destination) {
+                printk(KERN_INFO "Moving up a floor!\n");
+                pet_elevator->current_floor = pet_elevator->current_floor + 1;
+                // Elevator sleeps for 2 seconds when moving a floor
+                ssleep(2);
+            }
+            else if (pet_elevator->current_floor > destination) {
+                printk(KERN_INFO "Moving down a floor!\n");
+                pet_elevator->current_floor = pet_elevator->current_floor - 1;
+                ssleep(2);
+            }
         }
         else {
             // Check if any floors has a request right now
@@ -205,6 +225,7 @@ static int move_elevator_thread(void *data) {
                 msleep_interruptible(1000);
                 continue;
             }
+            printk(KERN_INFO "Looking for the closest request, does it fail here");
             int direction = get_closest_request();
             printk(KERN_INFO "There is a pet waiting on floor - %d \n",direction);
             // If already on the floor, pick up the pet
@@ -234,11 +255,6 @@ static int move_elevator_thread(void *data) {
                 else if (pet_elevator->current_floor == 5) {
                     if (!list_empty(&floor5->pets_waiting)) {
                         add_pet_to_elevator(pet_elevator,floor5);
-                    }
-                }
-                else if (pet_elevator->current_floor == 6) {
-                    if (!list_empty(&floor6->pets_waiting)) {
-                        add_pet_to_elevator(pet_elevator,floor6);
                     }
                 }
                 // Sleep for 1 second when loading/unloading
@@ -282,44 +298,58 @@ static void cleanup_floor_list(struct floor* flo) {
     }
 }
 
-// static void dispense_pets_from_elevator(struct elevator* ele) {
+static bool dispense_pets_from_elevator(struct elevator* ele) {
 
-//     // For each pet in the elevator, check if the elevator is on their destination floor
-//     // If it is then remove from list,
-//     // else skip them because we're not on their floor
-//     struct pet* entry, *next_entry;
-//     list_for_each_entry_safe(entry, next_entry, &pet_elevator->pet_list, list) {
-//         if (entry->destination_floor != pet_elevator->current_floor) continue;
-//         printk(KERN_INFO "Pet type -> %d has reached it's destination floor -> %d",
-//         entry->pet_type, entry->destination_floor);
-//         list_del(&entry->list);
-//         kfree(entry);
-//     }
-
-// }
+    // For each pet in the elevator, check if the elevator is on their destination floor
+    // If it is then remove from list,
+    // else skip them because we're not on their floor
+    struct pet* entry, *next_entry;
+    bool pet_dispensed = false;
+    list_for_each_entry_safe(entry, next_entry, &pet_elevator->pet_list, list) {
+        if (entry->destination_floor != pet_elevator->current_floor) continue;
+        printk(KERN_INFO "Pet type -> %d has reached it's destination floor -> %d",
+        entry->pet_type, entry->destination_floor);
+        list_del(&entry->list);
+        kfree(entry);
+        ele->num_of_pets = ele->num_of_pets - 1;
+        pet_dispensed = true;
+    }
+    return pet_dispensed;
+}
 
 static bool look_for_request(void) {
-    if (!list_empty(&floor1->pets_waiting)) return true;
-    if (!list_empty(&floor2->pets_waiting)) return true;
-    if (!list_empty(&floor3->pets_waiting)) return true;
-    if (!list_empty(&floor4->pets_waiting)) return true; 
-    if (!list_empty(&floor5->pets_waiting)) return true;
-    if (!list_empty(&floor6->pets_waiting)) return true;
-    return false;
+
+    bool found = false;
+
+    mutex_lock(&floor1->lock);
+    mutex_lock(&floor2->lock);
+    mutex_lock(&floor3->lock);
+    mutex_lock(&floor4->lock);
+    mutex_lock(&floor5->lock);
+
+    if (!list_empty(&floor1->pets_waiting)) found = true;
+    else if (!list_empty(&floor2->pets_waiting)) found = true;
+    else if (!list_empty(&floor3->pets_waiting)) found = true;
+    else if (!list_empty(&floor4->pets_waiting)) found = true;
+    else if (!list_empty(&floor5->pets_waiting)) found = true;
+
+    mutex_unlock(&floor1->lock);
+    mutex_unlock(&floor2->lock);
+    mutex_unlock(&floor3->lock);
+    mutex_unlock(&floor4->lock);
+    mutex_unlock(&floor5->lock);
+
+    return found;
 }
 
 static int get_closest_request(void) {
-    // I can check based on distance from the current floor
-    // eg. current floor is 3 and there is a request on floors 6 and 1
-    // distance from f1 is 2, from f6 is 3 
-    // if current floor > floor level
-    //(floorlevel - currentfloor)
-    // else 
-    // current floor - floorlevel
-    // I return with the floor level that is the closest to the elevator
     int closest_floor;
-    int max;
-
+    int max = INT_MAX;
+    mutex_lock(&floor1->lock);
+    mutex_lock(&floor2->lock);
+    mutex_lock(&floor3->lock);
+    mutex_lock(&floor4->lock);
+    mutex_lock(&floor5->lock);
     if (!list_empty(&floor1->pets_waiting)) {
         if (pet_elevator->current_floor == 1) {
             closest_floor = 1;
@@ -330,7 +360,7 @@ static int get_closest_request(void) {
             max = pet_elevator->current_floor - 1;
         }
     }
-    else if (!list_empty(&floor2->pets_waiting)) {
+    if (!list_empty(&floor2->pets_waiting)) {
         int temp;
         if (pet_elevator->current_floor == 2) {
             closest_floor = 2;
@@ -346,7 +376,7 @@ static int get_closest_request(void) {
         }
         max = temp;
     }
-    else if (!list_empty(&floor3->pets_waiting)) {
+    if (!list_empty(&floor3->pets_waiting)) {
         int temp;
         if (pet_elevator->current_floor == 3) {
             closest_floor = 3;
@@ -362,7 +392,7 @@ static int get_closest_request(void) {
         }
         max = temp;
     }
-    else if (!list_empty(&floor4->pets_waiting)) {
+    if (!list_empty(&floor4->pets_waiting)) {
         int temp;
         if (pet_elevator->current_floor == 4) {
             closest_floor = 4;
@@ -378,15 +408,11 @@ static int get_closest_request(void) {
         }
         max = temp;
     }
-    else if (!list_empty(&floor5->pets_waiting)) {
+    if (!list_empty(&floor5->pets_waiting)) {
         int temp;
         if (pet_elevator->current_floor == 5) {
             closest_floor = 5;
             temp = 0;
-        }
-        else if (pet_elevator->current_floor > 5 && pet_elevator->current_floor - 5 < max) {
-            closest_floor = 5;
-            temp = pet_elevator->current_floor - 5;
         }
         else if (pet_elevator->current_floor < 5 && 5 - pet_elevator->current_floor < max) {
             closest_floor = 5;
@@ -394,61 +420,43 @@ static int get_closest_request(void) {
         }
         max = temp;
     }
-    else if (!list_empty(&floor6->pets_waiting)) {
-        int temp;
-        if (pet_elevator->current_floor == 6) {
-            closest_floor = 6;
-            temp = 0;
-        }
-        else if (pet_elevator->current_floor < 6 && 6 - pet_elevator->current_floor < max) {
-            closest_floor = 6;
-            temp = 6 - pet_elevator->current_floor;
-        }
-        max = temp;
-    }
-
+    mutex_unlock(&floor1->lock);
+    mutex_unlock(&floor2->lock);
+    mutex_unlock(&floor3->lock);
+    mutex_unlock(&floor4->lock);
+    mutex_unlock(&floor5->lock);
     return closest_floor;
 
 }
 
-static void remove_first_pet_from_floor(struct floor* flo) {
-    // When a pet is being added to the elevator, 
-    // I will call this to remove it from the proper floor
-    struct pet* next_pet = list_first_entry(&flo->pets_waiting,struct pet,list);
-    list_del(&next_pet->list);
-    kfree(next_pet);
-}
-
 static void add_pet_to_elevator(struct elevator* pet_elevator, struct floor* flo) {
-    struct pet* new_pet = kmalloc(sizeof(*new_pet),GFP_KERNEL);
-    if (!new_pet)
-        return;
+    
+    mutex_lock(&flo->lock); 
+    printk(KERN_INFO "Attempting to add to elevator");
+    
+    while (!list_empty(&flo->pets_waiting)) {
+        struct pet* new_pet = list_first_entry(&flo->pets_waiting, struct pet, list);
+        if (!new_pet) break;
+        
+        int current_weight = 0;
+        struct pet* entry;
+        list_for_each_entry(entry, &pet_elevator->pet_list, list) {
+            current_weight += entry->weight;
+        }
+        
+        if (pet_elevator->num_of_pets >= 5 || (current_weight + new_pet->weight > max_weight)) {
+            printk(KERN_INFO "Elevator full or too heavy, cannot add pet.\n");
+            break; 
+        }
 
-    if (pet_elevator->num_of_pets >= 5) {
-        printk(KERN_INFO "Elevator currently full\n");
-        return;
+        list_del(&new_pet->list);
+        printk(KERN_INFO "Successfully added pet to elevator\n");
+        
+        list_add_tail(&new_pet->list, &pet_elevator->pet_list);
+        pet_elevator->num_of_pets += 1;
     }
-    // else if (pet_elevator->num_of_pets == 0) {
-    //     printk(KERN_INFO "No pets in elevator");
-    //     return;
-    // }
-
-    int current_weight = 0;
-    struct pet* entry;
-    list_for_each_entry(entry, &pet_elevator->pet_list, list) {
-        current_weight = current_weight + entry->weight;
-    }
-    if (current_weight + new_pet->weight > max_weight) {
-        printk(KERN_INFO "Cannot add pet because it exceeds the max weight\n");
-        return;
-    }
-    mutex_lock(&flo->lock);
-    remove_first_pet_from_floor(flo);
+    
     mutex_unlock(&flo->lock);
-
-    // Don't need to lock here because its only called inside the threadfn which already locks
-    pet_elevator->num_of_pets = pet_elevator->num_of_pets + 1;
-    list_add_tail(&new_pet->list,&pet_elevator->pet_list);
 }
 
 static void add_pet_to_floor(int type, int start_floor, int dest_floor) {
@@ -470,24 +478,18 @@ static void add_pet_to_floor(int type, int start_floor, int dest_floor) {
     mutex_lock(&floor3->lock);
     mutex_lock(&floor4->lock);
     mutex_lock(&floor5->lock);
-
     if (start_floor == 1) list_add_tail(&new_pet->list,&floor1->pets_waiting);
     if (start_floor == 2) list_add_tail(&new_pet->list,&floor2->pets_waiting);
     if (start_floor == 3) list_add_tail(&new_pet->list,&floor3->pets_waiting);
     if (start_floor == 4) list_add_tail(&new_pet->list,&floor4->pets_waiting);
     if (start_floor == 5) list_add_tail(&new_pet->list,&floor5->pets_waiting);
-    if (start_floor == 6) list_add_tail(&new_pet->list,&floor6->pets_waiting);
-
     mutex_unlock(&floor1->lock);
     mutex_unlock(&floor2->lock);
     mutex_unlock(&floor3->lock);
     mutex_unlock(&floor4->lock);
     mutex_unlock(&floor5->lock);
-    mutex_unlock(&floor6->lock);
-
 
     printk(KERN_INFO "Pet has been added to floor %d \n", start_floor);
-
 }
 
 static ssize_t procfile_read(struct file* file, char* ubuf, size_t count, loff_t *ppos) {
