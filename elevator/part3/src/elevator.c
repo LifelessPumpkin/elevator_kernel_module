@@ -14,7 +14,7 @@
 #define ENTRY_NAME "elevator"
 #define PERMS 0666
 #define PARENT NULL
-#define BUF_LEN 100
+#define BUF_LEN 2048
 
 extern int (*STUB_start_elevator)(void);
 extern int (*STUB_issue_request)(int,int,int);
@@ -70,6 +70,9 @@ static struct floor* floor3 = NULL;
 static struct floor* floor4 = NULL;
 static struct floor* floor5 = NULL;
 
+/* cumulative serviced pets counter */
+static int pets_serviced = 0;
+
 static int start_elevator(void) {
 
     // If elevator is already active return 1
@@ -89,9 +92,18 @@ static int start_elevator(void) {
     floor5 = kmalloc(sizeof(*floor5), GFP_KERNEL);
 
     
-    // If it can't allocate memory return -ENOMEM
+    // If it can't allocate memory free any allocated objects and return -ENOMEM
     if (!pet_elevator || !floor1 || !floor2 || !floor3 || !floor4 || !floor5) {
         printk(KERN_INFO "Couldn't allocate memory to run the elevator\n");
+        if (pet_elevator) {
+            kfree(pet_elevator);
+            pet_elevator = NULL;
+        }
+        if (floor1) { kfree(floor1); floor1 = NULL; }
+        if (floor2) { kfree(floor2); floor2 = NULL; }
+        if (floor3) { kfree(floor3); floor3 = NULL; }
+        if (floor4) { kfree(floor4); floor4 = NULL; }
+        if (floor5) { kfree(floor5); floor5 = NULL; }
         return -ENOMEM;
     }
     
@@ -122,9 +134,13 @@ static int start_elevator(void) {
     pet_elevator->thread = kthread_run(move_elevator_thread,pet_elevator,"elevator_thread");
     if (IS_ERR(pet_elevator->thread)) {
         printk(KERN_ERR "Failed to create the elevator thread\n");
-        kfree(pet_elevator);
-        pet_elevator = NULL;
-        // Its not letting me use -ERRORNUM
+        /* free all allocated resources */
+        if (pet_elevator) { kfree(pet_elevator); pet_elevator = NULL; }
+        if (floor1) { kfree(floor1); floor1 = NULL; }
+        if (floor2) { kfree(floor2); floor2 = NULL; }
+        if (floor3) { kfree(floor3); floor3 = NULL; }
+        if (floor4) { kfree(floor4); floor4 = NULL; }
+        if (floor5) { kfree(floor5); floor5 = NULL; }
         return -ENOMEM;
     }
 
@@ -354,6 +370,8 @@ static bool dispense_pets_from_elevator(struct elevator* ele) {
         list_del(&entry->list);
         kfree(entry);
         ele->num_of_pets = ele->num_of_pets - 1;
+        /* track serviced pets */
+        pets_serviced++;
         pet_dispensed = true;
     }
     return pet_dispensed;
@@ -489,26 +507,184 @@ static void add_pet_to_floor(int type, int start_floor, int dest_floor) {
 }
 
 static ssize_t procfile_read(struct file* file, char* ubuf, size_t count, loff_t *ppos) {
-    int len;
+    int len = 0;
+    int i;
 
     /* single-read semantics */
     if (*ppos > 0) return 0;
 
-    /* Show current elevator state (if running) */
-    if (pet_elevator) {
-        len = snprintf(msg, BUF_LEN, "Current floor: %d\nNumber of pets: %d\n", pet_elevator->current_floor, pet_elevator->num_of_pets);
+    /* Local copies of elevator info built under lock */
+    int cur_floor = 0;
+    int cur_num = 0;
+    int cur_load = 0;
+    char *elev_pets = kmalloc(512, GFP_KERNEL);
+    if (!elev_pets) return -ENOMEM;
+    elev_pets[0] = '\0';
+
+    if (!pet_elevator || !pet_elevator->active) {
+        len += scnprintf(msg + len, BUF_LEN - len, "Elevator state: OFFLINE\n");
+        len += scnprintf(msg + len, BUF_LEN - len, "Current floor: N/A\n");
+        len += scnprintf(msg + len, BUF_LEN - len, "Current load: 0 lbs\n");
+        len += scnprintf(msg + len, BUF_LEN - len, "Elevator status:\n\n");
     } else {
-        len = snprintf(msg, BUF_LEN, "Elevator not running\n");
+        /* Copy elevator state under elevator lock */
+        mutex_lock(&pet_elevator->lock);
+        cur_floor = pet_elevator->current_floor;
+        cur_num = pet_elevator->num_of_pets;
+
+        /* Build elevator pet list and compute load */
+        {
+            struct pet* e;
+            int off = 0;
+            for (e = list_first_entry_or_null(&pet_elevator->pet_list, struct pet, list);
+                 e != NULL;
+                 e = list_is_head(&e->list, &pet_elevator->pet_list) ? NULL : list_first_entry_or_null(&e->list, struct pet, list)) {
+                /* This iteration approach is awkward; instead iterate using list_for_each_entry */
+                break;
+            }
+            /* Proper iteration */
+            off = 0;
+            list_for_each_entry(e, &pet_elevator->pet_list, list) {
+                char t = (e->pet_type == 0) ? 'C' : (e->pet_type == 1) ? 'P' : (e->pet_type == 2) ? 'H' : 'D';
+                off += scnprintf(elev_pets + off, 512 - off, "%c%d ", t, e->destination_floor);
+                cur_load += e->weight;
+                if (off >= 512 - 16) break;
+            }
+            if (off > 0 && elev_pets[off-1] == ' ') elev_pets[off-1] = '\0';
+            else elev_pets[off] = '\0';
+        }
+        mutex_unlock(&pet_elevator->lock);
+
+        /* Count waiting pets across floors (we'll compute below) and determine state heuristically */
+        /* Determine movement state: LOADING if elevator has a pet with destination==cur_floor or there are waiting pets on cur_floor; */
+        bool loading = false;
+        /* We'll compute loading and waiting counts while inspecting floors below */
+        (void)loading; /* retained for potential future use */
     }
 
-    if (len >= BUF_LEN) {
-        len = BUF_LEN - 1;
-        msg[len] = '\0';
+    /* Now gather floor-by-floor info and counts. We'll also compute total waiting and whether current floor has waiters */
+    int total_waiting = 0;
+    bool current_floor_has_waiters = false;
+    struct pet *entry, *next_entry;
+    /* We'll store per-floor strings in a small buffer */
+    char (*floor_lines)[512] = kmalloc_array(5, 512, GFP_KERNEL);
+    if (!floor_lines) { kfree(elev_pets); return -ENOMEM; }
+    for (i = 0; i < 5; ++i) floor_lines[i][0] = '\0';
+
+    int floor_counts[5] = {0,0,0,0,0};
+    for (i = 5; i >= 1; --i) {
+        struct floor* flo = (i == 1) ? floor1 : (i == 2) ? floor2 : (i == 3) ? floor3 : (i == 4) ? floor4 : floor5;
+        int count = 0;
+        int off = 0;
+        if (!flo) continue;
+        mutex_lock(&flo->lock);
+        list_for_each_entry_safe(entry, next_entry, &flo->pets_waiting, list) {
+            count++;
+            char t = (entry->pet_type == 0) ? 'C' : (entry->pet_type == 1) ? 'P' : (entry->pet_type == 2) ? 'H' : 'D';
+            off += scnprintf(floor_lines[i-1] + off, sizeof(floor_lines[i-1]) - off, "%c%d ", t, entry->destination_floor);
+            if (off >= (int)sizeof(floor_lines[i-1]) - 8) break;
+        }
+        mutex_unlock(&flo->lock);
+        if (off > 0 && floor_lines[i-1][off-1] == ' ') floor_lines[i-1][off-1] = '\0';
+        total_waiting += count;
+        floor_counts[i-1] = count;
+        if (pet_elevator && pet_elevator->active && pet_elevator->current_floor == i && count > 0) current_floor_has_waiters = true;
     }
 
-    if (copy_to_user(ubuf, msg, len + 1)) return -EFAULT;
+    /* Now, reconstruct the header using collected data */
+    /* Determine elevator state */
+    char state_buf[32] = "IDLE";
+    if (!pet_elevator || !pet_elevator->active) {
+        strcpy(state_buf, "OFFLINE");
+    } else {
+        /* Determine: LOADING if elevator has destination==current floor or current floor has waiters */
+        bool has_dest_here = false;
+        int cur_floor_local = pet_elevator->current_floor;
+        mutex_lock(&pet_elevator->lock);
+        list_for_each_entry(entry, &pet_elevator->pet_list, list) {
+            if (entry->destination_floor == cur_floor_local) { has_dest_here = true; break; }
+        }
+        mutex_unlock(&pet_elevator->lock);
+        if (has_dest_here || current_floor_has_waiters) strcpy(state_buf, "LOADING");
+        else if (pet_elevator->num_of_pets == 0 && total_waiting == 0) strcpy(state_buf, "IDLE");
+        else {
+            /* Decide UP/DOWN heuristically: prefer elevator occupants' destinations, else closest request */
+            int direction = 0; /* 1 up, -1 down */
+            mutex_lock(&pet_elevator->lock);
+            if (!list_empty(&pet_elevator->pet_list)) {
+                struct pet* first = list_first_entry(&pet_elevator->pet_list, struct pet, list);
+                if (first->destination_floor > pet_elevator->current_floor) direction = 1;
+                else if (first->destination_floor < pet_elevator->current_floor) direction = -1;
+            }
+            mutex_unlock(&pet_elevator->lock);
+            if (direction == 0 && total_waiting > 0) {
+                int closest = get_closest_request();
+                if (closest > pet_elevator->current_floor) direction = 1;
+                else if (closest < pet_elevator->current_floor) direction = -1;
+            }
+            if (direction == 1) strcpy(state_buf, "UP");
+            else if (direction == -1) strcpy(state_buf, "DOWN");
+            else strcpy(state_buf, "IDLE");
+        }
+    }
+
+    /* Now header: state, current floor, current load, elevator status list */
+    /* compute current load and elevator pet list again under lock */
+    cur_load = 0;
+    elev_pets[0] = '\0';
+    if (pet_elevator && pet_elevator->active) {
+        mutex_lock(&pet_elevator->lock);
+        list_for_each_entry(entry, &pet_elevator->pet_list, list) {
+            cur_load += entry->weight;
+        }
+        /* Build elev_pets string properly */
+        {
+            int off = 0;
+            list_for_each_entry(entry, &pet_elevator->pet_list, list) {
+                char t = (entry->pet_type == 0) ? 'C' : (entry->pet_type == 1) ? 'P' : (entry->pet_type == 2) ? 'H' : 'D';
+                off += scnprintf(elev_pets + off, 512 - off, "%c%d ", t, entry->destination_floor);
+                if (off >= 512 - 8) break;
+            }
+            if (off > 0 && elev_pets[off-1] == ' ') elev_pets[off-1] = '\0';
+            else elev_pets[off] = '\0';
+        }
+        cur_num = pet_elevator->num_of_pets;
+        cur_floor = pet_elevator->current_floor;
+        mutex_unlock(&pet_elevator->lock);
+    }
+
+    len = 0; /* reset and write formatted output */
+    len += scnprintf(msg + len, BUF_LEN - len, "Elevator state: %s\n", state_buf);
+    if (pet_elevator && pet_elevator->active)
+        len += scnprintf(msg + len, BUF_LEN - len, "Current floor: %d\n", pet_elevator->current_floor);
+    else
+        len += scnprintf(msg + len, BUF_LEN - len, "Current floor: N/A\n");
+    len += scnprintf(msg + len, BUF_LEN - len, "Current load: %d lbs\n", cur_load);
+    len += scnprintf(msg + len, BUF_LEN - len, "Elevator status: %s\n\n", elev_pets[0] ? elev_pets : "");
+
+    /* Print floors from 5 down to 1 */
+    for (i = 5; i >= 1; --i) {
+        bool here = (pet_elevator && pet_elevator->active && pet_elevator->current_floor == i);
+        len += scnprintf(msg + len, BUF_LEN - len, "[%s] Floor %d: %d%s%s\n",
+                         here ? "*" : " ", i,
+                         floor_counts[i-1],
+                         (floor_lines[i-1][0] ? " " : ""),
+                         (floor_lines[i-1][0] ? floor_lines[i-1] : ""));
+    }
+
+    len += scnprintf(msg + len, BUF_LEN - len, "\nNumber of pets: %d\n", cur_num);
+    len += scnprintf(msg + len, BUF_LEN - len, "Number of pets waiting: %d\n", total_waiting);
+    len += scnprintf(msg + len, BUF_LEN - len, "Number of pets serviced: %d\n", pets_serviced);
+
+    if (len >= BUF_LEN) len = BUF_LEN - 1;
+    if (copy_to_user(ubuf, msg, len + 1)) {
+        kfree(elev_pets);
+        kfree(floor_lines);
+        return -EFAULT;
+    }
     *ppos = len + 1;
-    printk(KERN_INFO "proc_read: gave to user %s", msg);
+    kfree(elev_pets);
+    kfree(floor_lines);
     return len + 1;
 }
 
