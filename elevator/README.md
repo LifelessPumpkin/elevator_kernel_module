@@ -45,7 +45,6 @@ elevator/
 │   └── Makefile
 ├── part3/
 │   ├── src/
-│   ├── Makefile
 │   └── syscalls.c
 ├── Makefile
 └── README.md
@@ -81,20 +80,28 @@ cat /proc/timer
 sudo rmmod my_timer.ko
 ```
 
-
 ## Part 3
 
 ### Compilation
-For a C/C++ example:
 ```bash
 make
 ```
-This will build the executable in ...
-### Execution
+### Installation
 ```bash
-make run
+sudo insmod elevator.ko
 ```
-This will run the program ...
+
+### Running the program
+```bash
+./consumer --start
+./producer (any number of test cases)
+.consumer --stop
+```
+
+### Remove installation
+```bash
+sudo rmmod elevtor
+```
 
 ## Development Log
 
@@ -105,16 +112,16 @@ This will run the program ...
 | 2025-10-12 | Finished part1  |
 | 2025-10-13 | Finished part 2  |
 | 2025-10-24 | Compiled and installed kernel  |
-
-
+| 2025-10-30 | Implemented the syscall functions  |
+| 2025-10-31 | Made a bunch of the main logic |
+| 2025-11-02 | Finished up the project  |
 
 ## Meetings
 
-None, it was just me.
+- None, it was just me.
 
 ## Bugs
-- **Bug 1**: This is bug 1.
-- **Bug 2**: This is bug 2.
-- **Bug 3**: This is bug 3.
+- I shouldn't have any bugs
 
 ## Considerations
+- None
